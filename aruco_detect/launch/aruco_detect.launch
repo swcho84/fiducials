@@ -1,8 +1,8 @@
 <!-- Run the aruco_detect node -->
 <launch>
   <!-- namespace for camera input -->
-  <arg name="camera" default="/camera"/>
-  <arg name="image" default="image"/>
+  <arg name="camera" default="/ardrone/bottom"/>
+  <arg name="image" default="image_raw"/>
   <arg name="transport" default="compressed"/>
   <arg name="fiducial_len" default="0.14"/>
   <arg name="dictionary" default="7"/>
