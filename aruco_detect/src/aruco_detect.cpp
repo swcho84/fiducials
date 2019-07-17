@@ -62,8 +62,32 @@
 #include <string>
 #include <boost/algorithm/string.hpp>
 
+#include <niv_comm/VuInfo.h>
+#include <niv_comm/VuChunk.h>
+
+#define PIf     3.141592
+#define D2Rf    PIf/180.0f
+#define R2Df    180.0f/PIf
+
 using namespace std;
 using namespace cv;
+
+typedef struct
+{
+  float rangeU;
+  float rangeV;
+  float rangeW;
+  float rangeDist;
+  float rangeAng;
+  bool lidarStatus;
+} RangeImgPlane;
+
+typedef struct
+{
+  float leftPx;
+  float rightPx;
+  float angle;
+} OverlayChunk;
 
 class FiducialsNode {
   private:
@@ -72,6 +96,8 @@ class FiducialsNode {
 
     ros::Subscriber caminfo_sub;
     ros::Subscriber ignore_sub;
+    ros::Subscriber sub_collision_lidar_info;
+
     image_transport::ImageTransport it;
     image_transport::Subscriber img_sub;
 
@@ -95,6 +121,8 @@ class FiducialsNode {
 
     image_transport::Publisher image_pub;
 
+    niv_comm::VuInfo vuInfoRaw;
+
     cv::Ptr<aruco::DetectorParameters> detectorParams;
     cv::Ptr<aruco::Dictionary> dictionary;
 
@@ -108,7 +136,7 @@ class FiducialsNode {
                                    vector<Vec3d>& rvecs, vector<Vec3d>& tvecs,
                                    vector<double>& reprojectionError);
 
-
+    void payloadLidarInfoCallback(const niv_comm::VuInfo& msg);
     void ignoreCallback(const std_msgs::String &msg);
     void imageCallback(const sensor_msgs::ImageConstPtr &msg);
     void camInfoCallback(const sensor_msgs::CameraInfo::ConstPtr &msg);
@@ -124,6 +152,152 @@ class FiducialsNode {
     FiducialsNode();
 };
 
+Mat OverlayVuChunkInfo(Mat& imgFunc, const niv_comm::VuInfo& payloadInfo, fiducial_msgs::FiducialArray& fidMarkers, RangeImgPlane& rangeImgPlanePrCen)
+{
+  Mat imgRes;
+  imgRes = imgFunc;
+
+  // assigning chunk angles [rad]
+  std::vector<float> vecChunkAngs;
+  vecChunkAngs.push_back(-0.3665f);
+  vecChunkAngs.push_back(-0.2618f);
+  vecChunkAngs.push_back(-0.1571f);
+  vecChunkAngs.push_back(-0.05236f);
+  vecChunkAngs.push_back(0.05236f);
+  vecChunkAngs.push_back(0.1571f);
+  vecChunkAngs.push_back(0.2618f);
+  vecChunkAngs.push_back(0.3665f);
+
+  float resolution = 85.0f;
+  std::vector<OverlayChunk> vecOverlayChunks;
+  OverlayChunk temp;
+  temp.leftPx = -340.0f;
+  temp.rightPx = -255.0f;
+  temp.angle = -0.3665f;
+  vecOverlayChunks.push_back(temp);
+  for (unsigned int i = 1; i < (unsigned int)(vecChunkAngs.size()); i++)
+  {
+    OverlayChunk temp;
+    temp.leftPx = vecOverlayChunks[i - 1].leftPx + resolution;
+    temp.rightPx = vecOverlayChunks[i - 1].rightPx + resolution;
+    temp.angle = vecChunkAngs[i];
+    vecOverlayChunks.push_back(temp);
+  }
+
+  if ((int)(vecOverlayChunks.size()) > 0)
+  {
+    for (unsigned int i = 0; i < (unsigned int)(vecOverlayChunks.size()); i++)
+    {
+      if (vecOverlayChunks[i].leftPx <= -320.f)
+        vecOverlayChunks[i].leftPx = -320.0f;
+      if (vecOverlayChunks[i].rightPx >= 320.f)
+        vecOverlayChunks[i].rightPx = 320.0f;  
+    }
+  }
+
+  if ((int)(vecOverlayChunks.size()) > 0)
+  {
+    for (unsigned int i = 0; i < (unsigned int)(vecOverlayChunks.size()); i++)
+    {
+      ROS_INFO("Ang[%d](bdlidar,chunk):(%.4f,%.4f)", i, rangeImgPlanePrCen.rangeAng*R2Df, vecOverlayChunks[i].angle*R2Df);
+      if ((fabsf(rangeImgPlanePrCen.rangeAng - vecOverlayChunks[i].angle) < 0.1f) && (rangeImgPlanePrCen.lidarStatus))
+      {
+        Point ptStr;
+        ptStr.x = (int)(vecOverlayChunks[i].leftPx) + (imgRes.size().width) * (0.5f);
+        ptStr.y = (imgRes.size().height) * (0.5f);
+        Point ptEnd;
+        ptEnd.x = (int)(vecOverlayChunks[i].rightPx) + (imgRes.size().width) * (0.5f);
+        ptEnd.y = (imgRes.size().height) * (0.5f);
+        cv::line(imgRes, ptStr, ptEnd, Scalar(0, 0, 255), 2, 8, 0);
+      }
+      else
+      {
+        Point ptStr;
+        ptStr.x = (int)(vecOverlayChunks[i].leftPx) + (imgRes.size().width) * (0.5f);
+        ptStr.y = (imgRes.size().height) * (0.5f);
+        Point ptEnd;
+        ptEnd.x = (int)(vecOverlayChunks[i].rightPx) + (imgRes.size().width) * (0.5f);
+        ptEnd.y = (imgRes.size().height) * (0.5f);
+        cv::line(imgRes, ptStr, ptEnd, Scalar(255, 255, 255), 2, 8, 0);        
+      }
+    }
+  }
+
+  ROS_INFO("bdLidarInfo(range,xrel,yrel,angle):(%.4f,%.4f%.4f,%.4f)", rangeImgPlanePrCen.rangeDist,
+                                                                      rangeImgPlanePrCen.rangeW,
+                                                                      rangeImgPlanePrCen.rangeU, 
+                                                                      rangeImgPlanePrCen.rangeAng*R2Df);
+  ROS_INFO("markerInfo(upr,vpr):(%.4f,%.4f)", fidMarkers.fiducials[0].xcprx, fidMarkers.fiducials[0].ycprx);
+
+  imshow("debug", imgRes);
+
+  waitKey(5);
+  return imgRes;    
+}
+
+RangeImgPlane CalcBladeDistanceVector(const niv_comm::VuInfo& payloadInfo)
+{
+  const float scope = 1.0f;  // min_range ~ min_range + scope 까지를 클러스터링합니다.
+  const int num_chunk = static_cast<const int>(payloadInfo.vu_chunk_array.size());
+  float min_range = HUGE_VALF;
+  int min_range_index = -1;
+
+  for (int i = 0; i < num_chunk; i++)
+  {
+    const float range = payloadInfo.vu_chunk_array[i].range;
+    if (range > 0 && range < min_range)
+    {
+      min_range = range;
+      min_range_index = i;
+    }
+  }
+
+  if (min_range_index == -1)
+  {
+    return { 0.0f, 0.0f, -1.0f };
+  }
+
+  const float allowable_range = min_range + scope;
+  int start_index, end_index;
+
+  for (int i = min_range_index; i >= 0; i--)
+  {
+    const float range = payloadInfo.vu_chunk_array[i].range;
+    if (range < min_range || range > allowable_range)
+      break;
+    start_index = i;
+  }
+
+  for (int i = min_range_index; i < num_chunk; i++)
+  {
+    const float range = payloadInfo.vu_chunk_array[i].range;
+    if (range < min_range || range > allowable_range)
+      break;
+    end_index = i;
+  }
+
+  const int total = start_index + end_index;
+  niv_comm::VuChunk left = payloadInfo.vu_chunk_array[total / 2];
+  niv_comm::VuChunk right = payloadInfo.vu_chunk_array[(total + 1) / 2];
+  float u = (left.yrel + right.yrel) / 2.0f;
+  float w = (left.xrel + right.xrel) / 2.0f;
+  if (w < 0)
+    throw std::invalid_argument("recevied negative z value chunk");
+
+  RangeImgPlane rangeImgPlanePrCen;
+  rangeImgPlanePrCen.rangeU = u;
+  rangeImgPlanePrCen.rangeV = 0.0f;
+  rangeImgPlanePrCen.rangeW = w;
+  rangeImgPlanePrCen.rangeDist = sqrt((rangeImgPlanePrCen.rangeU * rangeImgPlanePrCen.rangeU) + 
+                                      (rangeImgPlanePrCen.rangeV * rangeImgPlanePrCen.rangeV) + 
+                                     (rangeImgPlanePrCen.rangeW * rangeImgPlanePrCen.rangeW));
+  rangeImgPlanePrCen.rangeAng = atan2f((rangeImgPlanePrCen.rangeU), (rangeImgPlanePrCen.rangeW));  
+  if (rangeImgPlanePrCen.rangeW < 0.0f)
+    rangeImgPlanePrCen.lidarStatus = false;
+  else
+    rangeImgPlanePrCen.lidarStatus = true;      
+  return rangeImgPlanePrCen;
+}
 
 /**
   * @brief Return object points for the system centered in a single marker, given the marker length
@@ -198,6 +372,11 @@ static double getReprojectionError(const vector<Point3f> &objectPoints,
     }
     double rerror = totalError/(double)objectPoints.size();
     return rerror;
+}
+
+void FiducialsNode::payloadLidarInfoCallback(const niv_comm::VuInfo& msg)
+{
+  vuInfoRaw = msg;
 }
 
 void FiducialsNode::estimatePoseSingleMarkers(const vector<int> &ids,
@@ -338,6 +517,9 @@ void FiducialsNode::imageCallback(const sensor_msgs::ImageConstPtr & msg) {
         vector <vector <Point2f> > corners, rejected;
         vector <Vec3d>  rvecs, tvecs;
 
+        Mat imgSrc;
+        imgSrc = cv_ptr->image;
+
         aruco::detectMarkers(cv_ptr->image, dictionary, corners, ids, detectorParams);
         ROS_INFO("Detected %d markers", (int)ids.size());
 
@@ -357,8 +539,17 @@ void FiducialsNode::imageCallback(const sensor_msgs::ImageConstPtr & msg) {
             fid.y2 = corners[i][2].y;
             fid.x3 = corners[i][3].x;
             fid.y3 = corners[i][3].y;
+            fid.xc = corners[i][0].x + ((corners[i][1].x - corners[i][0].x) * (0.5f));
+            fid.yc = corners[i][0].y + ((corners[i][3].y - corners[i][0].y) * (0.5f));
+            fid.xcprx = fid.xc - ((cv_ptr->image).size().width) * (0.5f);
+            fid.ycprx = fid.yc - ((cv_ptr->image).size().height) * (0.5f);
             fva.fiducials.push_back(fid);
         }
+
+        RangeImgPlane bdLidar;
+        bdLidar = CalcBladeDistanceVector(vuInfoRaw);
+        Mat imgRes;
+        imgRes = OverlayVuChunkInfo(imgSrc, vuInfoRaw, fva, bdLidar);
 
         vertices_pub->publish(fva);
 
@@ -563,6 +754,9 @@ FiducialsNode::FiducialsNode() : nh(ros::NodeHandle("~")), it(nh)
     pose_pub = new ros::Publisher(nh.advertise<fiducial_msgs::FiducialTransformArray>("/fiducial_transforms", 1));
 
     dictionary = aruco::getPredefinedDictionary(dicno);
+
+    sub_collision_lidar_info = nh.subscribe("/payload_lidar/info", 1,
+                    &FiducialsNode::payloadLidarInfoCallback, this);
 
     img_sub = it.subscribe("/camera", 1,
                         &FiducialsNode::imageCallback, this);

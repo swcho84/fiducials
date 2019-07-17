@@ -14,6 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   fiducial_msgs
   dynamic_reconfigure
+  niv_comm
 )
 
 find_package(OpenCV REQUIRED)

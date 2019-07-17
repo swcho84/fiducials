@@ -12,3 +12,7 @@
  float64 y2
  float64 x3
  float64 y3
+ float64 xc
+ float64 yc
+ float64 xcprx
+ float64 ycprx

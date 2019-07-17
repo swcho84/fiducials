@@ -21,6 +21,6 @@
     <param name="fiducial_len_override" value="$(arg fiducial_len_override)"/>
     <remap from="/camera/compressed" 
         to="$(arg camera)/$(arg image)/$(arg transport)"/>
-    <remap from="/camera_info" to="$(arg camera)/info_raw"/>
+    <remap from="/camera_info" to="$(arg camera)/$(arg image)/info_raw"/>
   </node>
 </launch>
